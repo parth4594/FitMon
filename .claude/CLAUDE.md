@@ -11,6 +11,11 @@ dashboards via Grafana.
 
 ```
 FitMon/
+├── .claude/
+│   ├── agents/
+│   ├── skills/
+│   └── specs/
+│
 ├── dbt/
 │   ├── dbt_project.yml
 │   ├── profiles.yml              # Supabase connection (never commit secrets)
@@ -63,7 +68,6 @@ FitMon/
 ├── .gitignore
 ├── .pre-commit-config.yaml
 ├── .python-version
-├── CLAUDE.md
 └── pyproject.toml                # uv-managed dependencies
 ```
 
