@@ -1,0 +1,11 @@
+[project]
+name = "fitmon"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "duckdb>=1.4.4",
+    "pandas>=3.0.0",
+    "rich>=14.3.2",
+]
