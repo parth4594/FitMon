@@ -11,11 +11,6 @@ dashboards via Grafana.
 
 ```
 FitMon/
-├── .claude/
-│   ├── agents/
-│   ├── skills/
-│   └── specs/
-│
 ├── dbt/
 │   ├── dbt_project.yml
 │   ├── profiles.yml              # Supabase connection (never commit secrets)
@@ -29,40 +24,38 @@ FitMon/
 │
 ├── docs/                         # Architecture notes, data dictionaries
 ├── logs/                         # Runtime logs (gitignored)
-├── notebooks/                    # Jupyter EDA (exploratory only, never imported)
-├── scripts/                      # One-off utility scripts
+├── notebooks/                    # Jupyter EDA (exploratory only, never imported by src)
+├── utils/                        # One-off utility scripts
 │
 ├── src/
-│   ├── app/
-│   │   ├── __init__.py
-│   │   ├── cli.py                # CLI entrypoints (ingest, sync, run pipeline)
-│   │   ├── helpers.py            # Shared app-level utilities
-│   │   └── pipeline_runner.py    # Orchestrates ingestion → dbt
-│   │
 │   ├── config/
 │   │   ├── __init__.py
-│   │   ├── dbt_config.py
-│   │   ├── hevy_ingestion_config.py
-│   │   ├── logging_config.py
-│   │   └── postgres_config.py
+│   │   ├── settings.py           # All config via pydantic-settings + .env
+│   │   └── logging_config.py
 │   │
-│   ├── domain/
-│   │   ├── models/               # Entities + value objects (Workout, Set, HealthMetric)
-│   │   ├── ports/                # Abstract repository interfaces
-│   │   ├── services/             # Pure business logic (e1RM, volume, PR detection)
-│   │   └── usecases/             # Orchestration (ingest CSV, sync API, parse health)
+│   ├── models.py                 # Plain dataclasses: Workout, Set, HealthMetric
 │   │
-│   └── infrastructure/
-│       ├── adapters/             # Hevy API client, Apple Health XML parser
-│       ├── ingestion/            # CSV + XML → domain entities
-│       ├── schema/               # Raw table SQL definitions (migrations)
-│       └── utils/
-│           └── postgres_helpers.py  # Connection pool, upsert helpers
+│   ├── services/                 # Pure functions — no I/O, no DB
+│   │   ├── __init__.py
+│   │   ├── metrics.py            # e1RM, volume, tonnage calculations
+│   │   └── pr_detection.py       # PR detection logic
+│   │
+│   ├── ingestion/                # Reads raw sources → writes to raw schema
+│   │   ├── __init__.py
+│   │   ├── hevy_csv.py           # CSV → raw.workouts / raw.sets
+│   │   ├── hevy_api.py           # Hevy API client → raw.workouts / raw.sets
+│   │   └── apple_health.py       # XML → raw.health_metrics
+│   │
+│   ├── db/
+│   │   ├── __init__.py
+│   │   └── postgres.py           # Connection pool, upsert helpers
+│   │
+│   ├── pipeline.py               # Orchestrates ingestion → dbt run
+│   └── cli.py                    # CLI entrypoints (ingest, sync, run)
 │
 ├── tests/
-│   ├── unit/                     # Domain logic only — no DB, no network
-│   ├── integration/              # Repository + Supabase (test schema)
-│   └── e2e/                      # Full pipeline runs
+│   ├── unit/                     # Pure logic only — no DB, no network
+│   └── integration/              # Ingestion + Supabase (test schema)
 │
 ├── .env.example
 ├── .gitignore
@@ -72,10 +65,10 @@ FitMon/
 ```
 
 **Where things belong:**
-- DB connection + upsert helpers → `infrastructure/utils/postgres_helpers.py` only
-- External API/file parsing → `infrastructure/adapters/` and `infrastructure/ingestion/`
-- Pure business logic → `domain/services/` — no I/O, no DB imports
-- Orchestration → `domain/usecases/` — calls services + repositories
+- DB connection + upsert helpers → `src/db/postgres.py` only
+- Raw source parsing → `src/ingestion/` — writes untouched data to `raw` schema
+- Pure business logic → `src/services/` — no I/O, no DB imports
+- Orchestration → `src/pipeline.py`
 - Cleaning, renaming, type casting → `dbt/models/staging/` only
 - Aggregations → `dbt/models/marts/` only
 - Exercise name canonicalization → `dbt/seeds/dim_exercises.csv`
@@ -111,11 +104,11 @@ FitMon/
 
 - Python: PEP 8, snake_case everywhere
 - SQL (dbt): lowercase keywords, CTEs over subqueries, one model per file
+- Linting and formatting: ruff — enforced via pre-commit
 - dbt model naming: prefix enforced — `stg_`, `fct_`, `dim_`
 - All Postgres queries: parameterized only — never f-strings in SQL
 - Ingestion: idempotent by default — always upsert, never blind insert
 - Secrets: loaded from `.env` via `python-dotenv` — never hardcoded
-- `domain/` must never import from `infrastructure/` — ever
 
 ---
 ## Tech constraints
@@ -128,17 +121,6 @@ FitMon/
 - **No new packages** without updating `pyproject.toml` and flagging it
 
 ---
-## Subagent policy
-
-- Always use an explore subagent to read the relevant model or script
-  before modifying any existing logic
-- Always use a subagent to run `dbt test` and verify no broken refs
-  after any model change
-- When asked to plan a new pipeline or model, delegate codebase research
-  to a subagent before presenting the plan
-- Always use a plan subagent in plan mode before touching `marts/`
-
----
 ## Commands
 
 ```bash
@@ -146,11 +128,12 @@ FitMon/
 uv sync                                      # Install all dependencies from pyproject.toml
 uv add <package>                             # Add a new dependency
 uv run <command>                             # Run any command in the project venv
+uv add --dev ruff                            # Adding ruff to dependencies
 
 # Ingestion
-uv run python -m app.cli ingest-csv --file path/to/hevy_export.csv
-uv run python -m app.cli sync-hevy
-uv run python -m app.cli parse-health --file path/to/export.xml
+uv run python -m src.cli ingest-csv --file path/to/hevy_export.csv
+uv run python -m src.cli sync-hevy
+uv run python -m src.cli parse-health --file path/to/export.xml
 
 # dbt
 cd dbt
@@ -164,7 +147,6 @@ uv run dbt run --full-refresh                # Recompute from scratch
 # Tests
 uv run pytest tests/unit
 uv run pytest tests/integration
-uv run pytest tests/e2e
 ```
 
 ---
@@ -172,11 +154,10 @@ uv run pytest tests/e2e
 
 | Component | Status |
 |---|---|
-| `infrastructure/schema/` raw table SQL | Stub |
-| `infrastructure/ingestion/` CSV loader | Stub |
-| `infrastructure/adapters/` Hevy API client | Stub |
-| `infrastructure/ingestion/` Apple Health parser | Stub |
-| `infrastructure/utils/postgres_helpers.py` | Stub |
+| `src/db/postgres.py` | Stub |
+| `src/ingestion/hevy_csv.py` | Stub |
+| `src/ingestion/hevy_api.py` | Stub |
+| `src/ingestion/apple_health.py` | Stub |
 | `dbt/seeds/dim_exercises.csv` | Stub |
 | `dbt/models/staging/stg_workouts.sql` | Stub |
 | `dbt/models/staging/stg_sets.sql` | Stub |
@@ -189,12 +170,11 @@ uv run pytest tests/e2e
 ---
 ## Warnings and things to avoid
 
-- **Never put DB logic in `app/`** — it belongs in `infrastructure/utils/postgres_helpers.py`
+- **Never put DB logic outside `src/db/postgres.py`**
 - **Never clean data in ingestion scripts** — raw tables must be exact copies of source data
 - **Never hardcode Supabase credentials** — always read from `.env`
 - **Never use `INSERT` without conflict handling** — all ingestion must use `ON CONFLICT DO UPDATE`
 - **Never put aggregation logic in staging models** — staging cleans, marts aggregate
-- **Never import `infrastructure` from `domain/`** — dependency direction is domain ← usecase ← infra
 - **Never rename `dim_exercises.csv` columns** — downstream models depend on:
   `exercise_name`, `canonical_name`, `muscle_group`, `movement_pattern`, `equipment`
 - **`raw` schema has no foreign keys** — referential integrity is enforced in dbt tests only
