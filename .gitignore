@@ -16,3 +16,6 @@ dbt/logs/
 
 # Python cache files
 __pycache__/, *.pyc, *.pyo, *.pyd
+
+# data files
+.data/
