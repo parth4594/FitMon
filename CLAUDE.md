@@ -129,6 +129,7 @@ uv sync                                      # Install all dependencies from pyp
 uv add <package>                             # Add a new dependency
 uv run <command>                             # Run any command in the project venv
 uv add --dev ruff                            # Adding ruff to dependencies
+uv run python -m src.cli setup-db            # Create all schemas and tables in Supabase
 
 # Ingestion
 uv run python -m src.cli ingest-csv --file path/to/hevy_export.csv

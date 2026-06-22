@@ -11,6 +11,7 @@ CREATE SCHEMA IF NOT EXISTS raw;
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS raw.workout_sessions (
     workout_session_id UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    workout_name       TEXT    NULL,
     started_at         TIMESTAMPTZ NOT NULL,
     ended_at           TIMESTAMPTZ,
     duration_seconds   INTEGER,
@@ -39,7 +40,7 @@ CREATE TABLE IF NOT EXISTS raw.sets (
     set_id             UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     workout_session_id UUID         NOT NULL, -- logical FK → raw.workout_sessions
     exercise_id        UUID         NOT NULL, -- logical FK → raw.exercises
-    set_number         INTEGER      NOT NULL,
+    set_number         INTEGER      NULL,
     set_type           TEXT,                  -- e.g. 'warmup', 'working', 'failure'
     weight_kg          NUMERIC(6,2),
     reps               INTEGER,
