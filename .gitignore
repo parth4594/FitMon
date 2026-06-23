@@ -19,3 +19,6 @@ __pycache__/, *.pyc, *.pyo, *.pyd
 
 # data files
 .data/
+
+# state files
+.claude/state.md

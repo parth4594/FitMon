@@ -11,14 +11,14 @@ CREATE SCHEMA IF NOT EXISTS raw;
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS raw.workout_sessions (
     workout_session_id UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    workout_name       TEXT    NULL,
     started_at         TIMESTAMPTZ NOT NULL,
     ended_at           TIMESTAMPTZ,
     duration_seconds   INTEGER,
     notes              TEXT,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
+ALTER TABLE raw.workout_sessions
+ADD COLUMN IF NOT EXISTS workout_name TEXT NULL;
 -- ---------------------------------------------------------------------------
 -- raw.exercises
 -- One row per unique exercise name as it appears in the source system.
@@ -49,3 +49,4 @@ CREATE TABLE IF NOT EXISTS raw.sets (
     notes              TEXT,
     created_at         TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+
