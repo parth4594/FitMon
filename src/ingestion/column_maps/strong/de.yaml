@@ -1,0 +1,15 @@
+language: de
+headers:
+  date: Datum
+  workout_name: Workout-Name
+  duration: Dauer
+  exercise_name: Name der Übung
+  set_order: Reihenfolge festlegen
+  weight: Gewicht
+  reps: Wiederh.
+  distance: Entfernung
+  seconds: Sekunden
+  notes: Notizen
+  workout_notes: Workout-Notizen
+  rpe: RPE
+rest_marker: Ruhezeit

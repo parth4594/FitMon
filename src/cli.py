@@ -5,6 +5,7 @@ import click
 from rich.console import Console
 
 from src.db.postgres import get_connection
+from src.ingestion.ingest_workout_csv import ingest_csv
 
 console = Console()
 
@@ -38,6 +39,53 @@ def setup_db():
         sys.exit(1)
     finally:
         conn.close()
+
+
+@cli.command("ingest-csv")
+@click.option(
+    "--file",
+    "file_path",
+    required=True,
+    type=click.Path(exists=True, readable=True, dir_okay=False),
+    help="Path to the workout CSV export file.",
+)
+@click.option(
+    "--source",
+    required=True,
+    help="Source app name (e.g. 'strong'). Must match a column_maps/ subdirectory.",
+)
+@click.option(
+    "--lang",
+    default=None,
+    help=(
+        "Language code of the export (e.g. 'de', 'en'). "
+        "If omitted, auto-detected from the CSV header row."
+    ),
+)
+def ingest_csv_cmd(file_path: str, source: str, lang: str | None) -> None:
+    """Ingest a workout CSV export into the raw Supabase tables."""
+    try:
+        summary = ingest_csv(file_path=file_path, source=source, lang=lang)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        console.print(f"[red]✗[/] Ingestion failed: {exc}", err=True)
+        sys.exit(1)
+
+    sess = summary["sessions"]
+    exer = summary["exercises"]
+    sets = summary["sets"]
+    console.print(
+        f"[green]✓[/] Ingested [bold]{summary['rows_read']}[/] rows "
+        f"(lang=[bold]{summary['language']}[/])"
+    )
+    console.print(
+        f"   sessions  inserted={sess['inserted']}  updated={sess['updated']}"
+    )
+    console.print(f"   exercises inserted={exer['inserted']}")
+    console.print(
+        f"   sets      inserted={sets['inserted']}  updated={sets['updated']}"
+    )
 
 
 if __name__ == "__main__":

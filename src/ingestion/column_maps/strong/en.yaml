@@ -1,0 +1,16 @@
+language: en
+headers:
+  date: Date
+  workout_name: Workout Name
+  duration: Duration
+  exercise_name: Exercise Name
+  set_order: Set Order
+  weight: Weight
+  reps: Reps
+  distance: Distance
+  seconds: Seconds
+  notes: Notes
+  workout_notes: Workout Notes
+  rpe: RPE
+# NOTE: rest_marker is unverified — confirmed with a real English Strong export
+rest_marker: Rest Timer

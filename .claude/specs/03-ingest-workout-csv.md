@@ -8,7 +8,7 @@ user brings. The script is not tied to any one app: the caller specifies
 which app's column map to load via a `--source` flag, and the script does
 the same parsing and writing logic regardless of origin.
 
-Your immediate use case is ingesting your own Strong export. Any other user
+Your immediate use case is ingesting your own Strong app export. Any other user
 running this pipeline with a different app only needs to add a column map
 directory for their source — no code changes.
 
@@ -18,20 +18,20 @@ Two supporting capabilities ship alongside the script:
    `src/ingestion/column_maps/<source>/<lang>.yaml`. Adding a new app or a
    new language requires only a new YAML file — no code changes.
 2. Three helper functions in `src/db/postgres.py` that write run metadata
-   to `meta.ingestion_log` (table created by `spec_setup_db_cli.md`),
+   to `meta.ingestion_log` (table created by `02-db-cli-setup.md`),
    giving a persistent audit trail across all ingestion sources. The same
-   helpers are reused by future scripts (`hevy_api.py`, `apple_health.py`)
+   helpers are reused by future scripts (`ingest_hevy_api.py`, `ingest_apple_health_data.py`)
    with no redesign.
 
 ---
 
 ## 2. Depends on
 
-- `spec_db_setup.md` — `raw.workout_sessions`, `raw.exercises`, and
+- `01-database-setup.md` — `raw.workout_sessions`, `raw.exercises`, and
   `raw.sets` must exist in Supabase.
-- `spec_setup_db_cli.md` — `setup-db` must have been run so
+- `02-db-cli-setup.md` — `setup-db` must have been run so
   `meta.ingestion_log` exists.
-- Two schema amendments to `scripts/create_raw_tables.sql` (§5.A and §5.B).
+- Two schema amendments to `utils/create_raw_tables.sql` (§5.A and §5.B).
 
 ---
 
@@ -56,7 +56,7 @@ The CLI command `ingest-csv` lives in `src/cli.py` and calls
 
 ## 4. Source file profile
 
-Verified against your actual Strong German export — not assumed from
+Verified against your actual Strong App German export — not assumed from
 documentation.
 
 | Property | Value |
@@ -89,19 +89,15 @@ language, so it lives in the YAML config rather than being hardcoded.
 
 ## 5. Required schema amendments
 
+Both amendments below are already defined and applied in `02-db-cli-setup.md`.
+They are listed here only so the ingestion script's dependencies are visible
+in one place — do not redefine or reapply them.
+ 
 **A. `raw.sets.set_number` → nullable.**
-Rest-timer rows have no set number. Forcing a value (e.g. `0`) would
-misrepresent the source. The raw layer is a literal mirror of the source —
-nullable is the honest representation.
-
-**B. `raw.workout_sessions` → add `workout_name TEXT NULL`.**
-The `Workout-Name` column (e.g. `"Day 1"`, `"Abend-Workout"`) has no target
-column in the current schema. Dropping it silently would lose meaningful
-training-split metadata. Adding the column is the correct fix.
-
-Both are `ALTER TABLE` statements against the existing tables in Supabase.
-Update `scripts/create_raw_tables.sql` directly so a fresh setup gets the
-correct schema from the start.
+Required because rest-timer rows have no set number.
+ 
+**B. `raw.workout_sessions.workout_name TEXT NULL` → added.**
+Required to capture the workout name from the source CSV.
 
 ---
 
@@ -177,7 +173,7 @@ headers:
 rest_marker: Rest Timer
 ```
 
-These are Strong's conventional English labels based on general knowledge —
+These are Strong app's conventional English labels based on general knowledge —
 not byte-inspected the way the German file was. `rest_marker` in particular
 is unconfirmed. Treat this as a provisional starting point; tighten it the
 moment a real English Strong export is available.
@@ -191,7 +187,7 @@ moment a real English Strong export is available.
    against every YAML in the source directory (order-insensitive, exact
    match). App-exported headers are a closed set of localization strings —
    exact match is the right bar; fuzzy or semantic matching adds complexity
-   with no benefit.
+   with no benefit. The CSV Headers should not be considered as case-sensitive.
 3. If exactly one YAML matches 100%, use it.
 4. If zero or more than one match, **fail loudly** — never silently default
    to a language. Print which headers were unmatched so the error points
@@ -210,7 +206,7 @@ On startup, before touching any data rows, the loader must:
 
 This is what makes "add a language by dropping in a YAML" actually safe.
 Without this check, a typo in a new file silently breaks auto-detection
-without any obvious error.
+without any obvious error. Ignore case senstivity.
 
 ### 6.7 Dependency: `pyyaml`
 
@@ -332,7 +328,7 @@ apps never collides in shared tables.
 ## 10. Ingestion log
 
 The `meta.ingestion_log` table schema is defined and created in
-`spec_setup_db_cli.md`. That spec must be completed and `setup-db` run
+`02-db-cli-setup.md`. That spec must be completed and `setup-db` run
 before this script executes.
 
 ### 10.1 Helper functions in `src/db/postgres.py`
@@ -365,8 +361,8 @@ def fail_ingestion_log(
 
 `ingest_workout_csv.py` calls `start_ingestion_log` before any processing,
 `finish_ingestion_log` on clean exit, and `fail_ingestion_log` in the
-exception handler. The same three functions are reused by `hevy_api.py`
-and `apple_health.py` when those are built.
+exception handler. The same three functions are reused by `ingest_hevy_api.py`
+and `ingest_apple_health_data.py` when those are built.
 
 ### 10.2 Re-runs and this table
 
@@ -379,7 +375,7 @@ Data-level idempotency is handled separately by the UUIDv5 keys in §9.
 ## 11. Open decisions — confirm before implementation begins
 
 1. **Schema amendments** — apply §5.A and §5.B to Supabase via
-   `ALTER TABLE`, and update `scripts/create_raw_tables.sql` to match?
+   `ALTER TABLE`, and update `utils/create_raw_tables.sql` to match?
    Spec assumes yes.
 2. **`date` = start time or finish time?** — spec assumes start (§8.1).
 3. **Weight unit** — kg throughout your entire Strong history? (§8.5)
@@ -400,7 +396,6 @@ Data-level idempotency is handled separately by the UUIDv5 keys in §9.
 | `src/ingestion/ingest_workout_csv.py` | Create |
 | `src/ingestion/column_maps/strong/de.yaml` | Create |
 | `src/ingestion/column_maps/strong/en.yaml` | Create |
-| `scripts/create_raw_tables.sql` | Amend — §5.A and §5.B |
 | `src/db/postgres.py` | Add — `start_/finish_/fail_ingestion_log()` |
 | `src/cli.py` | Add — `ingest-csv` command |
 | `pyproject.toml` | Add `pyyaml` (subject to §11.6) |
@@ -436,16 +431,18 @@ Data-level idempotency is handled separately by the UUIDv5 keys in §9.
 
 ## 15. Definition of done
 
-- [ ] `scripts/create_raw_tables.sql` amended per §5.A and §5.B, applied to Supabase
+
+
+- [ ] `utils/create_raw_tables.sql` amended per §5.A and §5.B, applied to Supabase
 - [ ] `spec_setup_db_cli.md` completed and `setup-db` run so `meta.ingestion_log` exists
 - [ ] `column_maps/strong/de.yaml` and `en.yaml` exist and pass loader validation
 - [ ] Running `--source strong --lang de` ingests all 3,667 rows without error
 - [ ] Running `--source strong` without `--lang` auto-detects German correctly
 - [ ] A deliberately malformed YAML (missing a required key) fails at startup, not mid-run
 - [ ] An unrecognized header row (no matching YAML) fails with a clear message
-- [ ] 76 rows in `raw.workout_sessions`, each with `workout_name` populated
-- [ ] 65 rows in `raw.exercises`, whitespace variants preserved as distinct rows
-- [ ] 1,834 `raw.sets` rows with `set_type = 'working'`, 1,833 with `set_type = 'rest'`
+- [ ] One row in `raw.workout_sessions` per distinct `date` value in the source file, each with `workout_name` populated
+- [ ] One row in `raw.exercises` per distinct `exercise_name` raw string in the source file, whitespace variants preserved as distinct rows
+- [ ] Every non-rest row in the source file produces a `set_type = 'working'` row in `raw.sets`; every rest-marker row produces a `set_type = 'rest'` row with `set_number = NULL`
 - [ ] Every `'rest'` row has `set_number = NULL`
 - [ ] `RPE` and `workout_notes` mapped as `NULL` — not skipped
 - [ ] `ingestion_log` has a `'success'` row with accurate row counts after a clean run
@@ -453,3 +450,4 @@ Data-level idempotency is handled separately by the UUIDv5 keys in §9.
 - [ ] Re-running the same file twice produces 2 `ingestion_log` rows and zero duplicate `raw.sets` rows
 - [ ] Running with `--source another_app` and a valid column map for that app works without code changes
 
+On completion, update .claude/state.md with what was done and what are the open questions along with today's date.
