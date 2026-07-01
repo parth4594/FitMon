@@ -12,5 +12,5 @@ headers:
   notes: Notes
   workout_notes: Workout Notes
   rpe: RPE
-# NOTE: rest_marker is unverified — confirmed with a real English Strong export
+# NOTE: rest_marker is only relevant for the strong app column.
 rest_marker: Rest Timer

@@ -104,13 +104,6 @@ def _load_and_validate_all_maps(source_dir: Path) -> dict[str, dict]:
                 + ", ".join(sorted(extra))
             )
 
-        # rest_marker must be present and non-empty
-        rest_marker = data.get("rest_marker")
-        if not rest_marker or not str(rest_marker).strip():
-            sys.exit(
-                f"[column-map] {yaml_path.name}: 'rest_marker' is missing or empty."
-            )
-
         maps[lang_code] = data
 
     return maps
@@ -202,7 +195,9 @@ def _parse_duration_seconds(raw: str) -> int:
 
 
 def _parse_timestamp(raw: str) -> datetime:
-    """Parse naive datetime string, localize to Europe/Berlin, convert to UTC (§8.1)."""
+    """Parse naive datetime string, localize to Europe/Berlin, convert to UTC.
+     
+       Localizing to Europe/Berlin is necessary before UTC conversion."""
     naive = datetime.fromisoformat(raw.strip())
     local_dt = naive.replace(tzinfo=_TZ_LOCAL)
     return local_dt.astimezone(timezone.utc)
@@ -337,6 +332,12 @@ def ingest_csv(file_path: str, source: str, lang: str | None) -> dict[str, Any]:
                 exercises[exercise_name_raw] = source
 
                 # --- Row counter in original file order (§9) ---
+                # Strong's CSV has no native row IDs, so we derive a stable positional counter
+                # per (date, exercise_name) group to generate deterministic UUIDv5s for each row.
+                # We cannot use set_number because rest rows have set_number = NULL, which would
+                # cause two rest rows for the same exercise on the same day to produce identical
+                # UUIDs and collide on upsert. row_counter increments for every row — including
+                # rest rows — ensuring every row gets a unique, stable position across re-runs.
                 counter_key = (date_raw, exercise_name_raw)
                 row_counters[counter_key] = row_counters.get(counter_key, 0) + 1
                 row_counter = row_counters[counter_key]
