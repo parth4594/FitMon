@@ -2,10 +2,10 @@
 
 Entry point: ingest_csv() called from src.cli.
 """
-
+# TODO: Enhance error messages with custom error classes for each failure type (e.g., ColumnMapError, LanguageDetectionError, etc.)
 import csv
+import logging
 import re
-import sys
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -21,6 +21,8 @@ from src.db.postgres import (
     finish_ingestion_log,
     fail_ingestion_log,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -62,11 +64,11 @@ def _load_and_validate_all_maps(source_dir: Path) -> dict[str, dict]:
     """Load and validate every *.yaml in source_dir.
 
     Returns a mapping of {lang_code: parsed_yaml_dict}.
-    Raises SystemExit with a specific error if any file is invalid.
+    Raises ValueError with a specific error if any file is invalid.
     """
     yaml_files = sorted(source_dir.glob("*.yaml"))
     if not yaml_files:
-        sys.exit(
+        raise ValueError(
             f"[column-map] No YAML files found in {source_dir}. "
             "At least one <lang>.yaml is required."
         )
@@ -78,12 +80,12 @@ def _load_and_validate_all_maps(source_dir: Path) -> dict[str, dict]:
             data = yaml.safe_load(fh)
 
         if not isinstance(data, dict):
-            sys.exit(f"[column-map] {yaml_path.name}: root must be a YAML mapping.")
+            raise ValueError(f"[column-map] {yaml_path.name}: root must be a YAML mapping.")
 
         # Validate headers section
         headers = data.get("headers")
         if not isinstance(headers, dict):
-            sys.exit(
+            raise ValueError(
                 f"[column-map] {yaml_path.name}: missing or invalid 'headers' section."
             )
 
@@ -94,15 +96,26 @@ def _load_and_validate_all_maps(source_dir: Path) -> dict[str, dict]:
         missing = canonical_lower - present_keys
         extra = present_keys - canonical_lower
         if missing:
-            sys.exit(
+            raise ValueError(
                 f"[column-map] {yaml_path.name}: missing required header keys: "
                 + ", ".join(sorted(missing))
             )
         if extra:
-            sys.exit(
+            raise ValueError(
                 f"[column-map] {yaml_path.name}: unrecognized header keys: "
                 + ", ".join(sorted(extra))
             )
+
+        # rest_marker is optional — some sources have no rest-timer row concept
+        # at all. When present it must be a non-empty string; when absent,
+        # every row is treated as a working set (see _classify_set_row).
+        if "rest_marker" in data:
+            rest_marker = data["rest_marker"]
+            if not isinstance(rest_marker, str) or not rest_marker:
+                raise ValueError(
+                    f"[column-map] {yaml_path.name}: 'rest_marker' must be a "
+                    "non-empty string when present."
+                )
 
         maps[lang_code] = data
 
@@ -112,6 +125,43 @@ def _load_and_validate_all_maps(source_dir: Path) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 # Language resolution (§6.5)
 # ---------------------------------------------------------------------------
+
+
+def _detect_language(header_row: list[str], loaded_maps: dict[str, dict]) -> dict:
+    """Auto-detect language by comparing CSV headers against each loaded YAML's
+    header values (case-insensitive, order-insensitive, exact match — §6.5).
+
+    Returns the matched column-map dict. Raises ValueError if zero or more
+    than one YAML matches.
+    """
+    csv_headers_lower = {h.lower() for h in header_row}
+    matches: list[str] = []
+    for lang_code, col_map in loaded_maps.items():
+        yaml_header_values_lower = {v.lower() for v in col_map["headers"].values()}
+        if yaml_header_values_lower == csv_headers_lower:
+            matches.append(lang_code)
+
+    if len(matches) == 1:
+        return loaded_maps[matches[0]]
+
+    if len(matches) == 0:
+        # Find which headers didn't match any YAML to help the user diagnose
+        all_yaml_values_lower: set[str] = set()
+        for col_map in loaded_maps.values():
+            all_yaml_values_lower |= {v.lower() for v in col_map["headers"].values()}
+        unmatched = csv_headers_lower - all_yaml_values_lower
+        raise ValueError(
+            "[lang] Auto-detection failed: no YAML matched the CSV headers exactly.\n"
+            f"       CSV headers: {sorted(header_row)}\n"
+            f"       Unmatched headers: {sorted(unmatched)}\n"
+            "       Add a YAML file for this language or check for typos."
+        )
+
+    # More than one match — ambiguous
+    raise ValueError(
+        "[lang] Auto-detection failed: multiple YAMLs matched the CSV headers: "
+        + ", ".join(sorted(matches))
+    )
 
 
 def _resolve_language(
@@ -124,42 +174,13 @@ def _resolve_language(
     if lang_arg is not None:
         if lang_arg not in all_maps:
             available = ", ".join(sorted(all_maps))
-            sys.exit(
+            raise ValueError(
                 f"[lang] Language '{lang_arg}' not found in {source_dir}. "
                 f"Available: {available}"
             )
         return all_maps[lang_arg]
 
-    # Auto-detect: compare CSV headers (case-insensitive, order-insensitive)
-    # against each YAML's header values
-    csv_headers_lower = {h.lower() for h in csv_header_row}
-    matches: list[str] = []
-    for lang_code, col_map in all_maps.items():
-        yaml_header_values_lower = {v.lower() for v in col_map["headers"].values()}
-        if yaml_header_values_lower == csv_headers_lower:
-            matches.append(lang_code)
-
-    if len(matches) == 1:
-        return all_maps[matches[0]]
-
-    if len(matches) == 0:
-        # Find which headers didn't match any YAML to help the user diagnose
-        all_yaml_values_lower: set[str] = set()
-        for col_map in all_maps.values():
-            all_yaml_values_lower |= {v.lower() for v in col_map["headers"].values()}
-        unmatched = csv_headers_lower - all_yaml_values_lower
-        sys.exit(
-            "[lang] Auto-detection failed: no YAML matched the CSV headers exactly.\n"
-            f"       CSV headers: {sorted(csv_header_row)}\n"
-            f"       Unmatched headers: {sorted(unmatched)}\n"
-            "       Add a YAML file for this language or check for typos."
-        )
-
-    # More than one match — ambiguous
-    sys.exit(
-        "[lang] Auto-detection failed: multiple YAMLs matched the CSV headers: "
-        + ", ".join(sorted(matches))
-    )
+    return _detect_language(csv_header_row, all_maps)
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +191,21 @@ def _resolve_language(
 def _build_canonical_reader(col_map: dict) -> dict[str, str]:
     """Invert the YAML headers map: {csv_column_header: canonical_name}."""
     return {v: k for k, v in col_map["headers"].items()}
+
+
+def _map_row_to_canonical(raw_row: dict[str, str], col_map: dict) -> dict[str, str]:
+    """Rename raw CSV column headers to canonical keys per col_map.
+
+    Pure rename only — values are passed through unchanged, never parsed or
+    cast (§17.2). Type casting happens later, in the transformation helpers.
+    """
+    canonical_reader = _build_canonical_reader(col_map)
+    canonical: dict[str, str] = {}
+    for csv_col, value in raw_row.items():
+        c_name = canonical_reader.get(csv_col)
+        if c_name is not None:
+            canonical[c_name] = value if value is not None else ""
+    return canonical
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +232,7 @@ def _parse_duration_seconds(raw: str) -> int:
 
 def _parse_timestamp(raw: str) -> datetime:
     """Parse naive datetime string, localize to Europe/Berlin, convert to UTC.
-     
+
        Localizing to Europe/Berlin is necessary before UTC conversion."""
     naive = datetime.fromisoformat(raw.strip())
     local_dt = naive.replace(tzinfo=_TZ_LOCAL)
@@ -217,6 +253,18 @@ def _parse_decimal(raw: str) -> Decimal | None:
         return None
 
 
+def _classify_set_row(set_order_raw: str, rest_marker: str | None) -> dict[str, Any]:
+    """Classify a set-order cell as a rest-timer row or a working set (§8.3).
+
+    Compares against the active language map's rest_marker — never a
+    hardcoded string. Sources with no rest-timer row concept omit
+    rest_marker entirely (rest_marker=None), so every row is a working set.
+    """
+    if rest_marker is not None and set_order_raw == rest_marker:
+        return {"set_type": "rest", "set_number": None}
+    return {"set_type": "working", "set_number": int(set_order_raw)}
+
+
 def _make_uuid5(key_string: str) -> UUID:
     """Generate a deterministic UUIDv5 from the composite key string (§9)."""
     return uuid5(_UUID_NS, key_string)
@@ -233,15 +281,17 @@ def ingest_csv(file_path: str, source: str, lang: str | None) -> dict[str, Any]:
     Returns a summary dict with row counts, or raises on failure after
     writing a 'failed' row to meta.ingestion_log.
     """
+    logger.info("source=%s lang=%s file=%s", source, lang, file_path)
+
     csv_path = Path(file_path)
     if not csv_path.exists():
-        sys.exit(f"[file] CSV file not found: {csv_path}")
+        raise RuntimeError(f"[file] CSV file not found: {csv_path}")
 
     # Resolve source directory
     source_dir = _COLUMN_MAPS_DIR / source
     if not source_dir.is_dir():
         available = [d.name for d in _COLUMN_MAPS_DIR.iterdir() if d.is_dir()]
-        sys.exit(
+        raise RuntimeError(
             f"[source] Unknown source '{source}'. "
             f"Available: {', '.join(sorted(available)) or '(none)'}"
         )
@@ -255,13 +305,15 @@ def ingest_csv(file_path: str, source: str, lang: str | None) -> dict[str, Any]:
         try:
             header_row = next(reader)
         except StopIteration:
-            sys.exit(f"[file] CSV file is empty: {csv_path}")
+            raise RuntimeError(f"[file] CSV file is empty: {csv_path}")
 
     # Phase 2: resolve language (§6.5)
     col_map = _resolve_language(source_dir, all_maps, lang, header_row)
     resolved_lang: str = col_map["language"]
-    rest_marker: str = col_map["rest_marker"]
-    canonical_reader = _build_canonical_reader(col_map)
+    rest_marker: str | None = col_map.get("rest_marker")
+
+    if lang is None:
+        logger.info("language auto-detected as '%s'", resolved_lang)
 
     # Connect and open the audit log row
     conn = get_connection()
@@ -302,12 +354,8 @@ def ingest_csv(file_path: str, source: str, lang: str | None) -> dict[str, Any]:
             for raw_row in dict_reader:
                 rows_read += 1
 
-                # Map CSV column headers → canonical names
-                canonical: dict[str, str] = {}
-                for csv_col, value in raw_row.items():
-                    c_name = canonical_reader.get(csv_col)
-                    if c_name is not None:
-                        canonical[c_name] = value if value is not None else ""
+                # Map CSV column headers → canonical names (rename only, §17.2)
+                canonical = _map_row_to_canonical(raw_row, col_map)
 
                 # --- Session ---
                 date_raw = canonical.get("date", "").strip()
@@ -326,6 +374,12 @@ def ingest_csv(file_path: str, source: str, lang: str | None) -> dict[str, Any]:
                         "duration_raw": duration_raw,
                         "workout_notes": workout_notes_raw,
                     }
+                    logger.debug(
+                        "session uuid=%s date=%s workout=%s",
+                        _make_uuid5(session_key),
+                        date_raw,
+                        workout_name_raw,
+                    )
 
                 # --- Exercise (no trimming — §8.4) ---
                 exercise_name_raw = canonical.get("exercise_name", "")
@@ -344,7 +398,7 @@ def ingest_csv(file_path: str, source: str, lang: str | None) -> dict[str, Any]:
 
                 # --- Classify set vs rest row (§8.3) ---
                 set_order_raw = canonical.get("set_order", "").strip()
-                is_rest = set_order_raw == rest_marker
+                classification = _classify_set_row(set_order_raw, rest_marker)
 
                 # Deterministic UUIDv5 PKs (§9)
                 set_id = _make_uuid5(
@@ -352,6 +406,14 @@ def ingest_csv(file_path: str, source: str, lang: str | None) -> dict[str, Any]:
                 )
                 workout_session_id = _make_uuid5(session_key)
                 exercise_id = _make_uuid5(f"{source}|{exercise_name_raw}")
+
+                logger.debug(
+                    "set uuid=%s exercise=%s row_counter=%s set_type=%s",
+                    set_id,
+                    exercise_name_raw,
+                    row_counter,
+                    classification["set_type"],
+                )
 
                 # Type casts (§8.5, §8.8)
                 weight_val = _parse_decimal(canonical.get("weight", ""))
@@ -371,8 +433,8 @@ def ingest_csv(file_path: str, source: str, lang: str | None) -> dict[str, Any]:
                         "set_id": set_id,
                         "workout_session_id": workout_session_id,
                         "exercise_id": exercise_id,
-                        "set_number": None if is_rest else int(set_order_raw),
-                        "set_type": "rest" if is_rest else "working",
+                        "set_number": classification["set_number"],
+                        "set_type": classification["set_type"],
                         "weight_kg": weight_val,
                         "reps": reps_val,
                         "rpe": rpe_val,
@@ -418,8 +480,10 @@ def ingest_csv(file_path: str, source: str, lang: str | None) -> dict[str, Any]:
                 row = cur.fetchone()
                 if row and row[0]:
                     sessions_inserted += 1
+                    logger.debug("session uuid=%s conflict_path=insert", session_id)
                 else:
                     sessions_updated += 1
+                    logger.debug("session uuid=%s conflict_path=update", session_id)
 
             # --- raw.exercises ---
             for exercise_name_raw, src in exercises.items():
@@ -488,6 +552,14 @@ def ingest_csv(file_path: str, source: str, lang: str | None) -> dict[str, Any]:
             rows_inserted=total_inserted,
             rows_updated=total_updated,
             rows_skipped=total_skipped,
+        )
+
+        logger.info(
+            "complete — read=%d inserted=%d updated=%d skipped=%d",
+            rows_read,
+            total_inserted,
+            total_updated,
+            total_skipped,
         )
 
         return {
