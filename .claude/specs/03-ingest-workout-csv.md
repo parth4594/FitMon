@@ -450,4 +450,270 @@ Data-level idempotency is handled separately by the UUIDv5 keys in §9.
 - [ ] Re-running the same file twice produces 2 `ingestion_log` rows and zero duplicate `raw.sets` rows
 - [ ] Running with `--source another_app` and a valid column map for that app works without code changes
 
-On completion, update .claude/state.md with what was done and what are the open questions along with today's date.
+
+## 16. Unit tests
+ 
+**File:** `tests/unit/test_ingest_workout_csv.py`
+ 
+No database connection required for any of these. Every function under test
+takes plain Python inputs and returns plain Python outputs.
+ 
+---
+ 
+### 16.1 YAML loader validation
+ 
+| Test | Input | Expected |
+|---|---|---|
+| Valid YAML passes | `de.yaml` with all 12 keys and a non-empty `rest_marker` | Loads without error |
+| Missing canonical key fails | YAML with `rpe` key removed | Raises error naming the missing key and the file |
+| Extra unrecognised key fails | YAML with an unknown key added | Raises error naming the unexpected key and the file |
+| Empty `rest_marker` fails | YAML with `rest_marker: ""` | Raises error at startup, not mid-run |
+| Unknown `--lang` fails | `--lang fr` with no `fr.yaml` present | Raises error listing available language codes |
+ 
+---
+ 
+### 16.2 Language auto-detection
+ 
+| Test | Input | Expected |
+|---|---|---|
+| German headers detected | CSV header row matching `de.yaml` values | Returns `de` config |
+| English headers detected | CSV header row matching `en.yaml` values | Returns `en` config |
+| Unrecognised headers fail | Header row matching no loaded YAML | Raises error listing unmatched headers |
+| Ambiguous headers fail | Header row matching two YAMLs (edge case) | Raises error rather than guessing |
+ 
+---
+ 
+### 16.3 Rest-row detection
+ 
+| Test | Input | Expected |
+|---|---|---|
+| Rest marker string → rest row | `set_order = "Ruhezeit"` with `rest_marker = "Ruhezeit"` | `set_type='rest'`, `set_number=None` |
+| Numeric string → working row | `set_order = "3"` | `set_type='working'`, `set_number=3` |
+| Rest marker is language-specific | `set_order = "Rest Timer"` with `rest_marker = "Rest Timer"` | `set_type='rest'`, `set_number=None` |
+| Numeric string never matches rest | `set_order = "1"` regardless of `rest_marker` | `set_type='working'` |
+ 
+---
+ 
+### 16.4 Decimal parsing
+ 
+| Test | Input | Expected |
+|---|---|---|
+| Period decimal (standard) | `"82.5"` | `Decimal("82.5")` |
+| Comma decimal (German locale) | `"82,5"` | `Decimal("82.5")` |
+| Integer string | `"80"` | `Decimal("80")` |
+| Float string with trailing zero | `"3.0"` | `Decimal("3.0")` |
+| Empty string | `""` | `None` |
+| Zero string | `"0"` | `Decimal("0")` |
+ 
+---
+
+ 
+## 17. Additional unit tests (pytest)
+ 
+These extend §16 with three specific test groups using `pytest`. All tests
+remain pure logic — no database connection, no real CSV file on disk.
+ 
+**Framework:** `pytest` (add via `uv add --dev pytest`)
+ 
+**File:** `tests/unit/test_ingest_workout_csv.py`
+ 
+Use `tmp_path` (pytest's built-in fixture) to write temporary YAML files
+where a real file on disk is needed by the loader.
+ 
+---
+ 
+### 17.1 Language auto-detection
+ 
+Tests for `_detect_language(header_row, loaded_maps)` or equivalent.
+ 
+```python
+# Fixture: two minimal loaded maps
+MAPS = {
+    "de": {"headers": {"date": "Datum", "workout_name": "Workout-Name", ...}, "rest_marker": "Ruhezeit"},
+    "en": {"headers": {"date": "Date",  "workout_name": "Workout Name",  ...}, "rest_marker": "Rest Timer"},
+}
+```
+ 
+| Test name | Input header row | Expected outcome |
+|---|---|---|
+| `test_detects_german_headers` | All German column names from `de.yaml` | Returns `"de"` config without error |
+| `test_detects_english_headers` | All English column names from `en.yaml` | Returns `"en"` config without error |
+| `test_unknown_headers_raises` | Headers that match no loaded YAML | Raises `ValueError` (not `SystemExit`) listing unmatched headers |
+| `test_ambiguous_headers_raises` | Headers crafted to match both YAMLs simultaneously | Raises `ValueError` (not `SystemExit`) rather than guessing |
+ 
+**Note on errors:** §18 replaces `sys.exit()` with proper exceptions. These
+tests assert `pytest.raises(ValueError)`, not `pytest.raises(SystemExit)`.
+ 
+---
+ 
+### 17.2 Column mapping application
+ 
+Tests for the function that remaps a raw CSV row dict using a loaded YAML map.
+This must verify that mapping and transformation are separate concerns —
+mapping only renames keys, it never changes values.
+ 
+```python
+RAW_ROW = {
+    "Datum": "2025-08-01 20:00:50",
+    "Workout-Name": "Abend-Workout",
+    "Dauer": "1h 24min",
+    "Name der Übung": "Pull Up",
+    "Reihenfolge festlegen": "1",
+    "Gewicht": "0",
+    "Wiederh.": "3.0",
+    "Entfernung": "0",
+    "Sekunden": "0.0",
+    "Notizen": "",
+    "Workout-Notizen": "",
+    "RPE": "",
+}
+```
+ 
+| Test name | Input | Expected outcome |
+|---|---|---|
+| `test_mapping_renames_keys` | `RAW_ROW` + `de` config | Returns dict with canonical keys (`date`, `workout_name`, `duration`, etc.) |
+| `test_mapping_preserves_values` | `RAW_ROW` + `de` config | All values are identical to the raw row — no parsing, no casting |
+| `test_mapping_includes_empty_columns` | `RAW_ROW` with empty `RPE` and `Workout-Notizen` | Canonical keys `rpe` and `workout_notes` are present in output with empty string values — not dropped |
+ 
+---
+ 
+## 18. Error handling and logging
+ 
+### 18.1 Replace `sys.exit()` with proper exceptions
+ 
+Every `sys.exit(...)` call in the ingestion script must be replaced with a
+raised exception. This makes errors catchable, testable with `pytest.raises`,
+and traceable through the logging system.
+ 
+| Current | Replace with |
+|---|---|
+| `sys.exit("...message...")` in loader validation | `raise ValueError("...message...")` |
+| `sys.exit("...message...")` in language detection | `raise ValueError("...message...")` |
+| Any other `sys.exit()` in ingestion logic | `raise RuntimeError("...message...")` for unexpected failures |
+ 
+The top-level CLI entry point (`ingest-csv` in `src/cli.py`) catches these
+and calls `fail_ingestion_log()` before exiting with a non-zero code:
+ 
+```python
+try:
+    run_ingestion(...)
+except (ValueError, RuntimeError) as exc:
+    fail_ingestion_log(conn, log_id, error_message=str(exc))
+    logger.error("Ingestion failed: %s", exc, exc_info=True)
+    raise SystemExit(1)
+```
+ 
+`SystemExit` is only raised at the CLI boundary — never inside library code.
+ 
+---
+ 
+### 18.2 Log levels
+ 
+Three levels used throughout the pipeline:
+ 
+| Level | When to use | Where it appears |
+|---|---|---|
+| `INFO` | Normal progress milestones — script started, language detected, session inserted, run complete with row counts | Console + log file |
+| `DEBUG` | Row-level detail — individual rows being processed, UUID generated, conflict path taken | Log file only |
+| `ERROR` | Any caught exception with full traceback | Console + log file |
+ 
+Examples:
+```
+[INFO]  ingest_workout_csv: source=strong lang=de file=strong_workouts.csv
+[INFO]  ingest_workout_csv: language auto-detected as 'de'
+[DEBUG] ingest_workout_csv: session uuid=<uuid> date=2025-08-01 workout=Abend-Workout
+[DEBUG] ingest_workout_csv: set uuid=<uuid> exercise=Pull Up row_counter=1 set_type=working
+[INFO]  ingest_workout_csv: complete — read=3667 inserted=150 updated=0 skipped=0
+[ERROR] ingest_workout_csv: missing required header key 'rpe' in de.yaml
+Traceback (most recent call last): ...
+```
+ 
+---
+ 
+### 18.3 Log file setup
+ 
+**Location:** `logs/pipeline_<YYYY-MM-DD>.log`
+ 
+One log file per calendar day. If the pipeline runs multiple times in a day,
+all runs append to the same file.
+ 
+A new `src/config/logging_config.py` module configures logging once at
+startup and is imported by `src/cli.py` before any command runs:
+ 
+```python
+# src/config/logging_config.py
+ 
+import logging
+import logging.handlers
+from datetime import date
+from pathlib import Path
+ 
+LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
+ 
+def configure_logging() -> None:
+    LOG_DIR.mkdir(exist_ok=True)
+    log_file = LOG_DIR / f"pipeline_{date.today()}.log"
+ 
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)  # capture everything at root level
+ 
+    # Console handler — INFO and above only
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
+    console.setFormatter(logging.Formatter("[%(levelname)s] %(name)s: %(message)s"))
+ 
+    # File handler — DEBUG and above, with full traceback
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+ 
+    root.addHandler(console)
+    root.addHandler(file_handler)
+```
+ 
+Call once at the top of `src/cli.py`:
+ 
+```python
+from src.config.logging_config import configure_logging
+configure_logging()
+```
+ 
+All modules then use the standard pattern — no setup needed per module:
+ 
+```python
+import logging
+logger = logging.getLogger(__name__)
+```
+ 
+---
+ 
+### 18.4 Future pipeline components
+ 
+Because `configure_logging()` is called at the CLI level and uses the root
+logger, any future module that uses `logging.getLogger(__name__)` —
+`hevy_api.py`, `apple_health.py`, dbt run wrappers, etc. — automatically
+writes to the same daily log file with the same format. No per-module
+logging setup is needed when new pipeline components are added.
+ 
+`logs/` must be added to `.gitignore`.
+ 
+---
+ 
+### 18.5 Files to change (error handling + logging)
+ 
+| File | Action |
+|---|---|
+| `src/config/logging_config.py` | Create — `configure_logging()` |
+| `src/cli.py` | Import and call `configure_logging()`; wrap CLI commands in try/except at the boundary |
+| `src/ingestion/ingest_workout_csv.py` | Replace all `sys.exit()` with `raise ValueError/RuntimeError`; add `logger = logging.getLogger(__name__)` and log statements per §19.2 |
+| `.gitignore` | Add `logs/` |
+
+### 18.6 Setting Log Mode at CLI run
+The user should be able to run the pipeline also by passing the log type in the arguments. Eg. if the user runs pipeline run --debug-mode, the pipeline should run in debug mode and the console should give detailed logs (it can be verbose). However if the user runs pipeline run --info-mode or by default pipeline run, the pipeline should run in INFO mode of logging level which means the console should show only INFO level logging.
+
+On completion, update .claude/state.md with what was done in just 2-3 lines along with today's date.
