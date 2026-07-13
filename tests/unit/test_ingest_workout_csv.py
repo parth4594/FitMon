@@ -16,6 +16,8 @@ from src.ingestion.ingest_workout_csv import (
     _map_row_to_canonical,
     _parse_decimal,
     _resolve_language,
+    is_cardio_row,
+    parse_hevy_timestamp,
 )
 
 # ---------------------------------------------------------------------------
@@ -256,3 +258,37 @@ def test_mapping_includes_empty_columns():
     assert result["rpe"] == ""
     assert "workout_notes" in result
     assert result["workout_notes"] == ""
+
+
+# ---------------------------------------------------------------------------
+# spec 04 §11.1 Hevy timestamp parsing
+# ---------------------------------------------------------------------------
+
+
+def test_parse_hevy_timestamp_roundtrip():
+    raw = "10.07.2026, 20:20"
+    dt = parse_hevy_timestamp(raw)
+    assert dt.year == 2026
+    assert dt.month == 7
+    assert dt.day == 10
+    assert dt.hour == 20
+    assert dt.minute == 20
+    assert dt.tzinfo is not None
+
+
+# ---------------------------------------------------------------------------
+# spec 04 §11.2 Cardio row detection
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "distance_km,duration_seconds,expected",
+    [
+        ("1.5", "", True),
+        ("", "300", True),
+        ("", "", False),
+        (None, None, False),
+    ],
+)
+def test_is_cardio_row(distance_km, duration_seconds, expected):
+    assert is_cardio_row(distance_km, duration_seconds) == expected

@@ -49,4 +49,22 @@ CREATE TABLE IF NOT EXISTS raw.sets (
     notes              TEXT,
     created_at         TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+ALTER TABLE raw.sets
+ADD COLUMN IF NOT EXISTS exercise_notes TEXT;
+
+-- ---------------------------------------------------------------------------
+-- raw.cardio_sets
+-- One row per set with non-null cardio data (distance_km or duration_seconds).
+-- Hevy-specific. No FK constraints — consistent with the raw schema rules.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS raw.cardio_sets (
+    cardio_set_id       UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    workout_session_id  UUID          NOT NULL, -- logical FK → raw.workout_sessions
+    exercise_id         UUID          NOT NULL, -- logical FK → raw.exercises
+    set_index           INTEGER       NOT NULL,
+    exercise_title      TEXT          NOT NULL,
+    distance_km         NUMERIC(8,3),
+    duration_seconds    INTEGER,
+    created_at          TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
 
