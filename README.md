@@ -24,7 +24,7 @@ FitMon is a project designed to replace commercial fitness apps with a fully own
 |---|---|
 | Database | PostgreSQL (via Supabase) |
 | Transformations | dbt Core |
-| Data ingestion | Strong CSV export / Hevy API (planned) |
+| Data ingestion | Strong CSV export / Hevy CSV export / Hevy API (planned) |
 | Health metrics | Apple Health XML export |
 | Bot interface | Telegram bot + Claude API |
 | Dashboard | Grafana |
@@ -35,7 +35,7 @@ FitMon is a project designed to replace commercial fitness apps with a fully own
 ## Data Sources
 
 - **Strong** — historical workout data via CSV export
-- **Hevy** — planned migration (official public API)
+- **Hevy** — current workout data via CSV export; official public API sync planned
 - **Apple Health / Apple Watch** — steps, heart rate, sleep, active calories
 
 
@@ -77,6 +77,7 @@ make setup-db                                                      # Create all 
 make ingest FILE=path/to/export.csv SOURCE=strong                  # Ingest a CSV (language auto-detected)
 make ingest FILE=path/to/export.csv SOURCE=strong LANG_CODE=de     # ...with an explicit language
 make ingest FILE=path/to/export.csv SOURCE=strong DEBUG=1          # ...with verbose console logging
+make ingest FILE=path/to/export.csv SOURCE=hevy LANG_CODE=en       # Ingest a Hevy CSV export
 make test                                                          # uv run pytest tests/unit
 make test-integration                                              # uv run pytest tests/integration
 make dbt-seed                                                      # cd dbt && uv run dbt seed
@@ -128,6 +129,9 @@ uv run python -m src.cli ingest-csv --file path/to/export.csv --source strong --
 # Auto-detect language from the CSV header row (--source is always required)
 uv run python -m src.cli ingest-csv --file path/to/export.csv --source strong
 
+# Hevy CSV export (English only — no German locale variant)
+uv run python -m src.cli ingest-csv --file path/to/hevy_export.csv --source hevy --lang en
+
 # Future sources (e.g. Hevy API, Apple Health) once implemented:
 uv run python -m src.cli sync-hevy
 uv run python -m src.cli parse-health --file path/to/export.xml
@@ -169,6 +173,7 @@ uv run pytest tests/integration
 
 - [x] Supabase schema setup
 - [x] Strong CSV import script
+- [x] Hevy CSV import script
 - [ ] Apple Health XML parser
 - [ ] Telegram bot for ongoing workout logging
 - [ ] dbt transformation models

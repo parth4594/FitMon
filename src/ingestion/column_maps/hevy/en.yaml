@@ -1,0 +1,21 @@
+language: en
+headers:
+  workout_name:     title
+  started_at:       start_time
+  ended_at:         end_time
+  notes:            description      # "description" in Hevy → "notes" in raw.workout_sessions
+  exercise_name:    exercise_title
+  set_number:       set_index        # zero-based; not transformed here
+  set_type:         set_type
+  weight_kg:        weight_kg
+  reps:             reps
+  rpe:              rpe
+  exercise_notes:   exercise_notes   # per-set notes; absent in Strong
+  distance_km:      distance_km      # cardio; routed to raw.cardio_sets if non-null
+  duration_seconds: duration_seconds # cardio; routed to raw.cardio_sets if non-null
+
+# Columns present in the CSV that must be silently ignored
+# NOTE: ignored_columns is a Hevy-specific key. The ingestion script reads
+# this list and skips matching source columns before mapping.
+ignored_columns:
+  - superset_id
