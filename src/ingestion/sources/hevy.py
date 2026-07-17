@@ -13,9 +13,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.db.postgres import finish_ingestion_log
 from src.ingestion.sources.base import (
     COLUMN_MAPS_DIR,
-    finish_ingestion_log,
     load_and_validate_all_maps,
     make_uuid5,
     map_row_to_canonical,
