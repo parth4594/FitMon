@@ -9,16 +9,16 @@ from decimal import Decimal
 import pytest
 import yaml
 
-from src.ingestion.ingest_workout_csv import (
-    _classify_set_row,
-    _detect_language,
-    _load_and_validate_all_maps,
-    _map_row_to_canonical,
-    _parse_decimal,
-    _resolve_language,
-    is_cardio_row,
-    parse_hevy_timestamp,
+from src.ingestion.sources.base import (
+    detect_language as _detect_language,
+    load_and_validate_all_maps as _load_and_validate_all_maps,
+    map_row_to_canonical as _map_row_to_canonical,
+    parse_decimal as _parse_decimal,
+    resolve_language as _resolve_language,
 )
+from src.ingestion.sources.hevy import is_cardio_row, parse_hevy_timestamp
+from src.ingestion.sources.strong import classify_set_row as _classify_set_row
+from src.ingestion.sources.strong import CANONICAL_KEYS as _STRONG_CANONICAL_KEYS
 
 # ---------------------------------------------------------------------------
 # Shared fixtures / fixture data
@@ -93,7 +93,7 @@ def _write_yaml(tmp_path, filename: str, data: dict):
 
 def test_valid_yaml_passes(tmp_path):
     _write_yaml(tmp_path, "de.yaml", DE_MAP)
-    maps = _load_and_validate_all_maps(tmp_path)
+    maps = _load_and_validate_all_maps(tmp_path, _STRONG_CANONICAL_KEYS)
     assert "de" in maps
     assert maps["de"]["rest_marker"] == "Ruhezeit"
 
@@ -102,23 +102,23 @@ def test_missing_canonical_key_fails(tmp_path):
     bad_map = {**DE_MAP, "headers": {k: v for k, v in DE_MAP["headers"].items() if k != "rpe"}}
     _write_yaml(tmp_path, "de.yaml", bad_map)
     with pytest.raises(ValueError, match="de.yaml"):
-        _load_and_validate_all_maps(tmp_path)
+        _load_and_validate_all_maps(tmp_path, _STRONG_CANONICAL_KEYS)
     with pytest.raises(ValueError, match="rpe"):
-        _load_and_validate_all_maps(tmp_path)
+        _load_and_validate_all_maps(tmp_path, _STRONG_CANONICAL_KEYS)
 
 
 def test_extra_unrecognised_key_fails(tmp_path):
     bad_map = {**DE_MAP, "headers": {**DE_MAP["headers"], "unexpected_key": "Foo"}}
     _write_yaml(tmp_path, "de.yaml", bad_map)
     with pytest.raises(ValueError, match="unexpected_key"):
-        _load_and_validate_all_maps(tmp_path)
+        _load_and_validate_all_maps(tmp_path, _STRONG_CANONICAL_KEYS)
 
 
 def test_empty_rest_marker_fails(tmp_path):
     bad_map = {**DE_MAP, "rest_marker": ""}
     _write_yaml(tmp_path, "de.yaml", bad_map)
     with pytest.raises(ValueError, match="rest_marker"):
-        _load_and_validate_all_maps(tmp_path)
+        _load_and_validate_all_maps(tmp_path, _STRONG_CANONICAL_KEYS)
 
 
 def test_missing_rest_marker_is_allowed(tmp_path):
@@ -126,13 +126,13 @@ def test_missing_rest_marker_is_allowed(tmp_path):
     # entirely — this must load without error (not a required key).
     no_rest_map = {k: v for k, v in DE_MAP.items() if k != "rest_marker"}
     _write_yaml(tmp_path, "de.yaml", no_rest_map)
-    maps = _load_and_validate_all_maps(tmp_path)
+    maps = _load_and_validate_all_maps(tmp_path, _STRONG_CANONICAL_KEYS)
     assert "rest_marker" not in maps["de"]
 
 
 def test_unknown_lang_fails(tmp_path):
     _write_yaml(tmp_path, "de.yaml", DE_MAP)
-    all_maps = _load_and_validate_all_maps(tmp_path)
+    all_maps = _load_and_validate_all_maps(tmp_path, _STRONG_CANONICAL_KEYS)
     with pytest.raises(ValueError, match="de"):
         _resolve_language(tmp_path, all_maps, "fr", list(DE_MAP["headers"].values()))
 
