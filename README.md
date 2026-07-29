@@ -24,7 +24,7 @@ FitMon is a project designed to replace commercial fitness apps with a fully own
 |---|---|
 | Database | PostgreSQL (via Supabase) |
 | Transformations | dbt Core |
-| Data ingestion | Strong CSV export / Hevy CSV export / Hevy API (planned) |
+| Data ingestion | Strong CSV export / Hevy CSV export / Hevy API |
 | Health metrics | Apple Health XML export |
 | Bot interface | Telegram bot + Claude API |
 | Dashboard | Grafana |
@@ -35,7 +35,7 @@ FitMon is a project designed to replace commercial fitness apps with a fully own
 ## Data Sources
 
 - **Strong** — historical workout data via CSV export
-- **Hevy** — current workout data via CSV export; official public API sync planned
+- **Hevy** — historical workout data via CSV export; ongoing sync via the official Hevy API
 - **Apple Health / Apple Watch** — steps, heart rate, sleep, active calories
 
 
@@ -57,7 +57,7 @@ supabase start
 uv sync
 
 # Configure Supabase credentials (never hardcoded — read from .env)
-cp .env.example .env   # then fill in SUPABASE_DB_HOST / PORT / NAME / USER / PASSWORD
+cp .env.example .env   # then fill in SUPABASE_DB_HOST / PORT / NAME / USER / PASSWORD / HEVY_API_KEY
 ```
 
 ---
@@ -78,6 +78,10 @@ make ingest FILE=path/to/export.csv SOURCE=strong                  # Ingest a CS
 make ingest FILE=path/to/export.csv SOURCE=strong LANG_CODE=de     # ...with an explicit language
 make ingest FILE=path/to/export.csv SOURCE=strong DEBUG=1          # ...with verbose console logging
 make ingest FILE=path/to/export.csv SOURCE=hevy LANG_CODE=en       # Ingest a Hevy CSV export
+make test-hevy-connection                                         # Verify HEVY_API_KEY is valid
+make backfill-hevy-ids                                             # One-time: patch hevy_workout_id onto CSV rows (run before first sync-hevy MODE=full)
+make sync-hevy MODE=full                                           # First-ever Hevy API sync (full history)
+make sync-hevy                                                     # Subsequent syncs (MODE defaults to auto → incremental)
 make test                                                          # uv run pytest tests/unit
 make test-integration                                              # uv run pytest tests/integration
 make dbt-seed                                                      # cd dbt && uv run dbt seed
@@ -109,6 +113,7 @@ on any subcommand:
 uv run python -m src.cli --help
 uv run python -m src.cli ingest-csv --help
 uv run python -m src.cli setup-db --help
+uv run python -m src.cli sync-hevy --help
 ```
 
 **Setup**
@@ -132,9 +137,39 @@ uv run python -m src.cli ingest-csv --file path/to/export.csv --source strong
 # Hevy CSV export (English only — no German locale variant)
 uv run python -m src.cli ingest-csv --file path/to/hevy_export.csv --source hevy --lang en
 
-# Future sources (e.g. Hevy API, Apple Health) once implemented:
-uv run python -m src.cli sync-hevy
+# Future source (Apple Health) once implemented:
 uv run python -m src.cli parse-health --file path/to/export.xml
+```
+
+**Hevy API sync**
+
+```bash
+# Verify HEVY_API_KEY is valid
+uv run python -m src.cli test-hevy-connection
+
+# One-time only, before the very first full sync: patch hevy_workout_id onto
+# CSV-ingested raw.workout_sessions rows by matching started_at against the
+# API, so the full sync's ON CONFLICT (hevy_workout_id) finds those rows
+# instead of inserting duplicates. Confirm zero NULL hevy_workout_id remain
+# before proceeding.
+uv run python -m utils.backfill_hevy_workout_ids
+
+# First-ever sync — full historical pull via GET /v1/workouts
+uv run python -m src.cli sync-hevy --mode full
+
+# Every subsequent run (e.g. from cron) — event-diff pull since the last
+# successful run, via GET /v1/workouts/events
+uv run python -m src.cli sync-hevy --mode incremental
+
+# Default: auto-detects full vs incremental from meta.ingestion_log
+uv run python -m src.cli sync-hevy
+```
+
+**Cron** (after manual runs are confirmed stable):
+
+```cron
+# Run incremental Hevy sync daily at 6am
+0 6 * * * cd /path/to/fitmon && uv run python -m src.cli sync-hevy >> logs/cron.log 2>&1
 ```
 
 **Logging.** By default the console shows `INFO` and above; every run also
@@ -174,12 +209,12 @@ uv run pytest tests/integration
 - [x] Supabase schema setup
 - [x] Strong CSV import script
 - [x] Hevy CSV import script
+- [x] Hevy API sync (full + incremental)
 - [ ] Apple Health XML parser
 - [ ] Telegram bot for ongoing workout logging
 - [ ] dbt transformation models
 - [ ] Grafana dashboard (PRs, volume, frequency heatmap)
 - [ ] Real-time workout analysis via Claude API
-- [ ] Migrate to Hevy API
 
 ---
 

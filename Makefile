@@ -19,7 +19,8 @@ else
 LANG_FLAG :=
 endif
 
-.PHONY: help install setup-db ingest test test-unit test-integration \
+.PHONY: help install setup-db ingest sync-hevy test-hevy-connection \
+        backfill-hevy-ids test test-unit test-integration \
         dbt-seed dbt-run dbt-run-staging dbt-test dbt-full-refresh \
         run clean
 
@@ -33,6 +34,9 @@ help: ## Show this help
 	@echo "  make setup-db"
 	@echo "  make ingest FILE=path/to/export.csv SOURCE=strong LANG_CODE=de"
 	@echo "  make ingest FILE=path/to/export.csv SOURCE=strong DEBUG=1"
+	@echo "  make test-hevy-connection"
+	@echo "  make backfill-hevy-ids   # one-time, run before the first sync-hevy MODE=full"
+	@echo "  make sync-hevy MODE=full"
 	@echo "  make run ARGS=\"ingest-csv --file path/to/export.csv --source strong --help\""
 
 install: ## Install all dependencies from pyproject.toml
@@ -45,6 +49,15 @@ ingest: ## Ingest a workout CSV — usage: make ingest FILE=... SOURCE=... [LANG
 	@test -n "$(FILE)" || (echo "FILE is required — e.g. make ingest FILE=path/to/export.csv SOURCE=strong" && exit 1)
 	@test -n "$(SOURCE)" || (echo "SOURCE is required — e.g. make ingest FILE=path/to/export.csv SOURCE=strong" && exit 1)
 	$(CLI) $(CLI_FLAGS) ingest-csv --file $(FILE) --source $(SOURCE) $(LANG_FLAG)
+
+test-hevy-connection: ## Verify the Hevy API key is valid
+	$(CLI) $(CLI_FLAGS) test-hevy-connection
+
+backfill-hevy-ids: ## One-time: patch hevy_workout_id onto CSV-ingested rows — run once, before the first sync-hevy MODE=full
+	uv run python -m utils.backfill_hevy_workout_ids
+
+sync-hevy: ## Sync workouts from the Hevy API — usage: make sync-hevy [MODE=auto|full|incremental]
+	$(CLI) $(CLI_FLAGS) sync-hevy --mode $(or $(MODE),auto)
 
 test: test-unit ## Alias for test-unit
 

@@ -14,5 +14,7 @@ class Settings(BaseSettings):
     supabase_db_user: str
     supabase_db_password: str
 
+    hevy_api_key: str
+
 
 settings = Settings()

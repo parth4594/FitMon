@@ -8,6 +8,8 @@ from rich.console import Console
 
 from src.config.logging_config import configure_logging, set_console_level
 from src.db.postgres import get_connection
+from src.ingestion.hevy_api_client import HevyAPIError, verify_connection
+from src.ingestion.ingest_hevy_api import run_sync
 from src.ingestion.ingest_workout_csv import ingest_csv
 
 configure_logging()
@@ -132,6 +134,55 @@ def ingest_csv_cmd(file_path: str, source: str, lang: str | None) -> None:
     console.print(
         f"   sets      inserted={sets['inserted']}  updated={sets['updated']}"
     )
+
+
+@cli.command(
+    "sync-hevy",
+    epilog=(
+        "Examples:\n\n"
+        "  uv run python -m src.cli sync-hevy\n\n"
+        "  uv run python -m src.cli sync-hevy --mode full\n\n"
+        "  uv run python -m src.cli sync-hevy --mode incremental"
+    ),
+)
+@click.option(
+    "--mode",
+    default="auto",
+    type=click.Choice(["auto", "full", "incremental"]),
+    help="'auto' (default) does a full sync if no prior run exists, incremental otherwise.",
+)
+def sync_hevy(mode: str) -> None:
+    """Sync workouts from the Hevy API into the raw Supabase tables."""
+    try:
+        summary = run_sync(mode=mode)
+    except (HevyAPIError, RuntimeError) as exc:
+        logger.error("Hevy API sync failed: %s", exc, exc_info=True)
+        console.print(f"[red]✗[/] Hevy API sync failed: {exc}")
+        raise SystemExit(1)
+
+    console.print(
+        f"[green]✓[/] Hevy API sync complete (mode=[bold]{summary['mode']}[/])"
+    )
+    console.print(
+        f"   sessions  inserted={summary['inserted']}  updated={summary['updated']}  "
+        f"skipped={summary['skipped']}"
+    )
+
+
+@cli.command(
+    "test-hevy-connection",
+    epilog="Example:\n\n  uv run python -m src.cli test-hevy-connection",
+)
+def test_hevy_connection() -> None:
+    """Verify the Hevy API key is valid."""
+    try:
+        verify_connection()
+    except HevyAPIError as exc:
+        logger.error("Hevy API connection test failed: %s", exc, exc_info=True)
+        console.print(f"[red]✗[/] Hevy API connection failed: {exc}")
+        raise SystemExit(1)
+
+    console.print("[green]✓[/] Hevy API connection OK")
 
 
 if __name__ == "__main__":

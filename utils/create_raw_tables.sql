@@ -19,6 +19,26 @@ CREATE TABLE IF NOT EXISTS raw.workout_sessions (
 );
 ALTER TABLE raw.workout_sessions
 ADD COLUMN IF NOT EXISTS workout_name TEXT NULL;
+
+-- Hevy API ingestion (spec 05 §4.A/§4.B) — hevy_workout_id is the native
+-- Hevy UUID and becomes the conflict key for API upserts, distinct from
+-- workout_session_id which is DB-generated for the CSV path. deleted_at
+-- stays NULL until soft-delete is implemented (deleted events are logged
+-- and skipped, never applied to raw tables — see ingest_hevy_api.py).
+ALTER TABLE raw.workout_sessions
+ADD COLUMN IF NOT EXISTS hevy_workout_id TEXT UNIQUE;
+ALTER TABLE raw.workout_sessions
+ADD COLUMN IF NOT EXISTS title TEXT;
+ALTER TABLE raw.workout_sessions
+ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE raw.workout_sessions
+ADD COLUMN IF NOT EXISTS routine_id TEXT;
+ALTER TABLE raw.workout_sessions
+ADD COLUMN IF NOT EXISTS hevy_updated_at TIMESTAMPTZ;
+ALTER TABLE raw.workout_sessions
+ADD COLUMN IF NOT EXISTS hevy_created_at TIMESTAMPTZ;
+ALTER TABLE raw.workout_sessions
+ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 -- ---------------------------------------------------------------------------
 -- raw.exercises
 -- One row per unique exercise name as it appears in the source system.
@@ -30,6 +50,17 @@ CREATE TABLE IF NOT EXISTS raw.exercises (
     source        TEXT        NOT NULL, -- e.g. 'hevy', 'manual'
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Hevy API ingestion (spec 05 §4.C) — exercise_template_id is the stable
+-- conflict key for API upserts; exercise_name can change, so it is not.
+ALTER TABLE raw.exercises
+ADD COLUMN IF NOT EXISTS exercise_template_id TEXT UNIQUE;
+ALTER TABLE raw.exercises
+ADD COLUMN IF NOT EXISTS supersets_id INTEGER;
+ALTER TABLE raw.exercises
+ADD COLUMN IF NOT EXISTS exercise_index INTEGER;
+ALTER TABLE raw.exercises
+ADD COLUMN IF NOT EXISTS notes TEXT;
 
 -- ---------------------------------------------------------------------------
 -- raw.sets
@@ -51,6 +82,28 @@ CREATE TABLE IF NOT EXISTS raw.sets (
 );
 ALTER TABLE raw.sets
 ADD COLUMN IF NOT EXISTS exercise_notes TEXT;
+
+-- Hevy API ingestion (spec 05 §4.D/§8) — no single stable conflict key
+-- exists for a set from the API, so hevy_workout_id + exercise_template_id
+-- + set_index (all TEXT/INTEGER, nullable for CSV-sourced rows) form a
+-- composite conflict key instead. workout_session_id / exercise_id (the
+-- DB-generated UUID FKs) are still populated on every API-sourced row too,
+-- resolved via the RETURNING clause on the parent session/exercise upserts.
+ALTER TABLE raw.sets
+ADD COLUMN IF NOT EXISTS hevy_workout_id TEXT;
+ALTER TABLE raw.sets
+ADD COLUMN IF NOT EXISTS exercise_template_id TEXT;
+ALTER TABLE raw.sets
+ADD COLUMN IF NOT EXISTS set_index INTEGER;
+ALTER TABLE raw.sets
+ADD COLUMN IF NOT EXISTS distance_meters NUMERIC(8,2);
+ALTER TABLE raw.sets
+ADD COLUMN IF NOT EXISTS duration_seconds INTEGER;
+ALTER TABLE raw.sets
+ADD COLUMN IF NOT EXISTS custom_metric NUMERIC(8,2);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_sets_hevy_conflict_key
+ON raw.sets (hevy_workout_id, exercise_template_id, set_index);
 
 -- ---------------------------------------------------------------------------
 -- raw.cardio_sets
