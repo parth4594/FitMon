@@ -38,25 +38,50 @@ def start_ingestion_log(
     source: str,
     language: str | None = None,
     details: dict | None = None,
+    ingestion_type: str | None = None,
 ) -> UUID:
     """Insert a 'running' row into meta.ingestion_log and return its UUID.
 
     Call this before processing any rows so that even a crash mid-run is
-    visible in the audit table.
+    visible in the audit table. `ingestion_type` distinguishes 'csv' vs
+    'api' sources sharing the same `source` value (spec 05 §4.E, §9).
     """
     details_json = json.dumps(details) if details is not None else None
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO meta.ingestion_log (source, language, status, details)
-            VALUES (%s, %s, 'running', %s)
+            INSERT INTO meta.ingestion_log (source, language, status, details, ingestion_type)
+            VALUES (%s, %s, 'running', %s, %s)
             RETURNING ingestion_log_id
             """,
-            (source, language, details_json),
+            (source, language, details_json, ingestion_type),
         )
         row = cur.fetchone()
     conn.commit()
     return row[0]
+
+
+def get_last_sync_timestamp(
+    conn: psycopg2.extensions.connection, source: str
+) -> str | None:
+    """Return the ISO timestamp of the most recent successful run for `source`.
+
+    Returns None if no prior successful run exists — the caller interprets
+    this as "no prior log entry" and falls back to a full sync (spec 05 §8).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT finished_at FROM meta.ingestion_log
+             WHERE source = %s AND status = 'success'
+             ORDER BY finished_at DESC LIMIT 1
+            """,
+            (source,),
+        )
+        row = cur.fetchone()
+    if row is None or row[0] is None:
+        return None
+    return row[0].isoformat()
 
 
 def finish_ingestion_log(
@@ -89,9 +114,12 @@ def fail_ingestion_log(
     conn: psycopg2.extensions.connection,
     log_id: UUID,
     error_message: str,
+    failure_code: str | None = None,
 ) -> None:
     """Mark an ingestion run as 'failed' with the error message.
 
+    `failure_code` records the HTTP status code (e.g. '429', '500') for
+    API-sourced failures (spec 05 §4.E, §9); CSV ingestion leaves it NULL.
     The caller is responsible for committing so this record survives even
     if the surrounding transaction is rolled back.
     """
@@ -101,9 +129,10 @@ def fail_ingestion_log(
             UPDATE meta.ingestion_log
                SET status        = 'failed',
                    error_message = %s,
+                   failure_code  = %s,
                    finished_at   = now()
              WHERE ingestion_log_id = %s
             """,
-            (error_message, str(log_id)),
+            (error_message, failure_code, str(log_id)),
         )
     conn.commit()

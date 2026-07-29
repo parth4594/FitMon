@@ -23,3 +23,9 @@ CREATE TABLE IF NOT EXISTS meta.ingestion_log (
     finished_at      TIMESTAMPTZ NULL,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Hevy API ingestion (spec 05 §4.E)
+ALTER TABLE meta.ingestion_log
+ADD COLUMN IF NOT EXISTS ingestion_type TEXT;
+ALTER TABLE meta.ingestion_log
+ADD COLUMN IF NOT EXISTS failure_code TEXT;

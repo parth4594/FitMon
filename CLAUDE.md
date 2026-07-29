@@ -97,8 +97,9 @@ uv run pytest tests/integration
 
 | Component | Status |
 |---|---|
-| `src/db/postgres.py` | Stub |
-| `src/ingestion/hevy_api.py` | Stub |
+| `src/db/postgres.py` | Done |
+| `src/ingestion/hevy_api_client.py` | Done |
+| `src/ingestion/ingest_hevy_api.py` | Done |
 | `src/ingestion/apple_health.py` | Stub |
 | `dbt/seeds/dim_exercises.csv` | Stub |
 | `dbt/models/staging/stg_workouts.sql` | Stub |
