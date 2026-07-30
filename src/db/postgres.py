@@ -39,22 +39,26 @@ def start_ingestion_log(
     language: str | None = None,
     details: dict | None = None,
     ingestion_type: str | None = None,
+    trigger_source: str = "manual",
 ) -> UUID:
     """Insert a 'running' row into meta.ingestion_log and return its UUID.
 
     Call this before processing any rows so that even a crash mid-run is
     visible in the audit table. `ingestion_type` distinguishes 'csv' vs
     'api' sources sharing the same `source` value (spec 05 §4.E, §9).
+    `trigger_source` distinguishes an operator-run sync ('manual') from
+    the daily launchd-triggered run ('cron').
     """
     details_json = json.dumps(details) if details is not None else None
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO meta.ingestion_log (source, language, status, details, ingestion_type)
-            VALUES (%s, %s, 'running', %s, %s)
+            INSERT INTO meta.ingestion_log
+                (source, language, status, details, ingestion_type, trigger_source)
+            VALUES (%s, %s, 'running', %s, %s, %s)
             RETURNING ingestion_log_id
             """,
-            (source, language, details_json, ingestion_type),
+            (source, language, details_json, ingestion_type, trigger_source),
         )
         row = cur.fetchone()
     conn.commit()
@@ -82,6 +86,32 @@ def get_last_sync_timestamp(
     if row is None or row[0] is None:
         return None
     return row[0].isoformat()
+
+
+def get_last_attempt(
+    conn: psycopg2.extensions.connection, source: str
+) -> dict | None:
+    """Return the most recent meta.ingestion_log row for `source`, regardless
+    of status — used by the pipeline health check to answer "when did we
+    last even try to run", as opposed to get_last_sync_timestamp's "when did
+    we last succeed" (used for incremental-sync cursoring).
+
+    Returns None if no row exists for this source yet.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT started_at, status
+              FROM meta.ingestion_log
+             WHERE source = %s
+             ORDER BY started_at DESC LIMIT 1
+            """,
+            (source,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return {"started_at": row[0], "status": row[1]}
 
 
 def finish_ingestion_log(

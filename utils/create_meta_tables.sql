@@ -29,3 +29,9 @@ ALTER TABLE meta.ingestion_log
 ADD COLUMN IF NOT EXISTS ingestion_type TEXT;
 ALTER TABLE meta.ingestion_log
 ADD COLUMN IF NOT EXISTS failure_code TEXT;
+
+-- Cron/launchd scheduling — distinguishes an operator-run `make sync-hevy`
+-- from the daily launchd-triggered run, so meta.ingestion_log alone answers
+-- "was this triggered manually or by cron".
+ALTER TABLE meta.ingestion_log
+ADD COLUMN IF NOT EXISTS trigger_source TEXT NOT NULL DEFAULT 'manual';

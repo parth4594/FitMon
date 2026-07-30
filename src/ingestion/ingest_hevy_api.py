@@ -332,7 +332,12 @@ def _write_workout(cur, workout: dict, counts: dict) -> None:
             upsert_set(cur, set_row, workout_session_id, exercise_id)
 
 
-def run_sync(mode: str = "auto") -> dict[str, Any]:
+def run_sync(
+    mode: str = "auto",
+    trigger_source: str = "manual",
+    is_late_run: bool = False,
+    delay_minutes: float | None = None,
+) -> dict[str, Any]:
     """Sync workouts from the Hevy API into raw.workout_sessions,
     raw.exercises, and raw.sets.
 
@@ -341,6 +346,12 @@ def run_sync(mode: str = "auto") -> dict[str, Any]:
     GET /v1/workouts/events?since=<last successful run>.
     mode='auto' (default) picks 'full' if no prior successful run exists,
     else 'incremental'.
+
+    `trigger_source` ('manual' or 'cron') and the `is_late_run`/
+    `delay_minutes` lateness flags (computed by src.pipeline against the
+    daily 14:00 Europe/Berlin schedule) are recorded in meta.ingestion_log
+    and echoed back in the result dict so callers can build alert emails
+    without a second query.
 
     Writes a 'running' row to meta.ingestion_log before fetching anything,
     then 'success' or 'failed' (with failure_code for HTTP errors) — never
@@ -360,7 +371,15 @@ def run_sync(mode: str = "auto") -> dict[str, Any]:
             effective_mode = "full"
 
         log_id = start_ingestion_log(
-            conn, source=SOURCE, ingestion_type="api", details={"mode": effective_mode}
+            conn,
+            source=SOURCE,
+            ingestion_type="api",
+            trigger_source=trigger_source,
+            details={
+                "mode": effective_mode,
+                "is_late_run": is_late_run,
+                "delay_minutes": delay_minutes,
+            },
         )
 
         if effective_mode == "full":
@@ -392,7 +411,13 @@ def run_sync(mode: str = "auto") -> dict[str, Any]:
             counts["skipped"],
         )
 
-        return {"mode": effective_mode, **counts}
+        return {
+            "mode": effective_mode,
+            **counts,
+            "trigger_source": trigger_source,
+            "is_late_run": is_late_run,
+            "delay_minutes": delay_minutes,
+        }
 
     except HevyAPIError as exc:
         # Roll back first: a DB error earlier in the loop leaves the
