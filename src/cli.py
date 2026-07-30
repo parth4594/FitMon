@@ -9,8 +9,8 @@ from rich.console import Console
 from src.config.logging_config import configure_logging, set_console_level
 from src.db.postgres import get_connection
 from src.ingestion.hevy_api_client import HevyAPIError, verify_connection
-from src.ingestion.ingest_hevy_api import run_sync
 from src.ingestion.ingest_workout_csv import ingest_csv
+from src.pipeline import check_pipeline_health, run_hevy_sync
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -142,7 +142,8 @@ def ingest_csv_cmd(file_path: str, source: str, lang: str | None) -> None:
         "Examples:\n\n"
         "  uv run python -m src.cli sync-hevy\n\n"
         "  uv run python -m src.cli sync-hevy --mode full\n\n"
-        "  uv run python -m src.cli sync-hevy --mode incremental"
+        "  uv run python -m src.cli sync-hevy --mode incremental\n\n"
+        "  uv run python -m src.cli sync-hevy --trigger-source cron  # launchd only"
     ),
 )
 @click.option(
@@ -151,10 +152,16 @@ def ingest_csv_cmd(file_path: str, source: str, lang: str | None) -> None:
     type=click.Choice(["auto", "full", "incremental"]),
     help="'auto' (default) does a full sync if no prior run exists, incremental otherwise.",
 )
-def sync_hevy(mode: str) -> None:
+@click.option(
+    "--trigger-source",
+    default="manual",
+    type=click.Choice(["manual", "cron"]),
+    help="Recorded in meta.ingestion_log. Use 'cron' only from the launchd job.",
+)
+def sync_hevy(mode: str, trigger_source: str) -> None:
     """Sync workouts from the Hevy API into the raw Supabase tables."""
     try:
-        summary = run_sync(mode=mode)
+        summary = run_hevy_sync(mode=mode, trigger_source=trigger_source)
     except (HevyAPIError, RuntimeError) as exc:
         logger.error("Hevy API sync failed: %s", exc, exc_info=True)
         console.print(f"[red]✗[/] Hevy API sync failed: {exc}")
@@ -183,6 +190,30 @@ def test_hevy_connection() -> None:
         raise SystemExit(1)
 
     console.print("[green]✓[/] Hevy API connection OK")
+
+
+@cli.command(
+    "check-pipeline-health",
+    epilog="Example:\n\n  uv run python -m src.cli check-pipeline-health",
+)
+def check_pipeline_health_cmd() -> None:
+    """Warn by email if sync-hevy hasn't run in over 25 hours.
+
+    Intended to run hourly via launchd (com.fitmon.pipeline-health-check);
+    safe to run manually at any time.
+    """
+    status = check_pipeline_health()
+    if status["stale"]:
+        console.print(
+            f"[yellow]![/] Pipeline stale — last attempt: "
+            f"{status['last_attempt_at']} "
+            f"({status['hours_since_last_attempt']} hours ago)"
+        )
+    else:
+        console.print(
+            f"[green]✓[/] Pipeline healthy — last attempt "
+            f"{status['hours_since_last_attempt']:.1f}h ago"
+        )
 
 
 if __name__ == "__main__":

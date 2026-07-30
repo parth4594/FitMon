@@ -19,8 +19,12 @@ else
 LANG_FLAG :=
 endif
 
+LAUNCHD_DIR := $(HOME)/Library/LaunchAgents
+LAUNCHD_UID := $(shell id -u)
+
 .PHONY: help install setup-db ingest sync-hevy test-hevy-connection \
-        backfill-hevy-ids test test-unit test-integration \
+        backfill-hevy-ids check-pipeline-health install-cron uninstall-cron \
+        test-cron test test-unit test-integration \
         dbt-seed dbt-run dbt-run-staging dbt-test dbt-full-refresh \
         run clean
 
@@ -37,6 +41,9 @@ help: ## Show this help
 	@echo "  make test-hevy-connection"
 	@echo "  make backfill-hevy-ids   # one-time, run before the first sync-hevy MODE=full"
 	@echo "  make sync-hevy MODE=full"
+	@echo "  make install-cron       # install daily sync-hevy + hourly health-check launchd jobs"
+	@echo "  make test-cron          # force-fire the sync-hevy job right now"
+	@echo "  make check-pipeline-health"
 	@echo "  make run ARGS=\"ingest-csv --file path/to/export.csv --source strong --help\""
 
 install: ## Install all dependencies from pyproject.toml
@@ -58,6 +65,27 @@ backfill-hevy-ids: ## One-time: patch hevy_workout_id onto CSV-ingested rows —
 
 sync-hevy: ## Sync workouts from the Hevy API — usage: make sync-hevy [MODE=auto|full|incremental]
 	$(CLI) $(CLI_FLAGS) sync-hevy --mode $(or $(MODE),auto)
+
+check-pipeline-health: ## Warn by email if sync-hevy hasn't run in 25+ hours
+	$(CLI) $(CLI_FLAGS) check-pipeline-health
+
+install-cron: ## Install + load the daily sync-hevy and hourly health-check launchd jobs
+	cp launchd/com.fitmon.sync-hevy.plist $(LAUNCHD_DIR)/
+	cp launchd/com.fitmon.pipeline-health-check.plist $(LAUNCHD_DIR)/
+	-launchctl bootout gui/$(LAUNCHD_UID)/com.fitmon.sync-hevy 2>/dev/null
+	-launchctl bootout gui/$(LAUNCHD_UID)/com.fitmon.pipeline-health-check 2>/dev/null
+	launchctl bootstrap gui/$(LAUNCHD_UID) $(LAUNCHD_DIR)/com.fitmon.sync-hevy.plist
+	launchctl bootstrap gui/$(LAUNCHD_UID) $(LAUNCHD_DIR)/com.fitmon.pipeline-health-check.plist
+	@echo "Installed. sync-hevy runs daily at 14:00 Europe/Berlin; health check runs hourly."
+
+uninstall-cron: ## Unload + remove both launchd jobs
+	-launchctl bootout gui/$(LAUNCHD_UID)/com.fitmon.sync-hevy 2>/dev/null
+	-launchctl bootout gui/$(LAUNCHD_UID)/com.fitmon.pipeline-health-check 2>/dev/null
+	rm -f $(LAUNCHD_DIR)/com.fitmon.sync-hevy.plist $(LAUNCHD_DIR)/com.fitmon.pipeline-health-check.plist
+
+test-cron: ## Force-fire the installed sync-hevy launchd job right now (does not wait for 14:00)
+	launchctl kickstart -k gui/$(LAUNCHD_UID)/com.fitmon.sync-hevy
+	@echo "Kicked off. Check logs/launchd-sync-hevy.log and meta.ingestion_log for the result."
 
 test: test-unit ## Alias for test-unit
 

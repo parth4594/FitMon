@@ -16,5 +16,12 @@ class Settings(BaseSettings):
 
     hevy_api_key: str
 
+    # Email alerts (pipeline run outcomes + 25h staleness warning)
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 465
+    smtp_user: str
+    smtp_password: str
+    alert_email_to: str
+
 
 settings = Settings()

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.fitmon.sync-hevy</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/parth/Code/FitMon/scripts/run_sync_hevy_cron.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>14</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/parth/Code/FitMon/logs/launchd-sync-hevy.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/parth/Code/FitMon/logs/launchd-sync-hevy.log</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

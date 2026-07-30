@@ -79,6 +79,11 @@ uv run python -m src.cli ingest-csv --file path/to/hevy_export.csv
 uv run python -m src.cli sync-hevy
 uv run python -m src.cli parse-health --file path/to/export.xml
 
+# Scheduling (launchd — daily sync-hevy 14:00 Europe/Berlin, hourly health check)
+make install-cron
+make test-cron
+uv run python -m src.cli check-pipeline-health
+
 # dbt
 cd dbt
 uv run dbt seed                              # Load dim_exercises.csv
@@ -100,6 +105,9 @@ uv run pytest tests/integration
 | `src/db/postgres.py` | Done |
 | `src/ingestion/hevy_api_client.py` | Done |
 | `src/ingestion/ingest_hevy_api.py` | Done |
+| `src/pipeline.py` | Done — sync-hevy orchestration, alert emails, health check |
+| `src/notifications/email_sender.py` | Done |
+| `src/services/notification_formatting.py` | Done |
 | `src/ingestion/apple_health.py` | Stub |
 | `dbt/seeds/dim_exercises.csv` | Stub |
 | `dbt/models/staging/stg_workouts.sql` | Stub |

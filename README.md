@@ -56,8 +56,10 @@ supabase start
 # Install Python dependencies from pyproject.toml
 uv sync
 
-# Configure Supabase credentials (never hardcoded — read from .env)
-cp .env.example .env   # then fill in SUPABASE_DB_HOST / PORT / NAME / USER / PASSWORD / HEVY_API_KEY
+# Configure credentials (never hardcoded — read from .env)
+cp .env.example .env   # then fill in SUPABASE_DB_* / HEVY_API_KEY / SMTP_* / ALERT_EMAIL_TO
+# For Gmail SMTP: SMTP_PASSWORD must be a 16-char App Password, not your
+# normal password — Google Account -> Security -> 2-Step Verification -> App Passwords.
 ```
 
 ---
@@ -165,12 +167,32 @@ uv run python -m src.cli sync-hevy --mode incremental
 uv run python -m src.cli sync-hevy
 ```
 
-**Cron** (after manual runs are confirmed stable):
+**Scheduling (launchd).** macOS doesn't run `cron` reliably for a machine
+that sleeps, so the daily sync and its health check are launchd
+`LaunchAgent`s instead — plists live in `launchd/`, and launchd
+automatically catches up a missed run (e.g. the machine was asleep at
+14:00) as soon as the machine wakes, rather than skipping it.
 
-```cron
-# Run incremental Hevy sync daily at 6am
-0 6 * * * cd /path/to/fitmon && uv run python -m src.cli sync-hevy >> logs/cron.log 2>&1
+```bash
+make install-cron         # install + load both jobs (idempotent, safe to re-run)
+make test-cron             # force-fire sync-hevy right now, without waiting for 14:00
+make check-pipeline-health # run the staleness check manually
+make uninstall-cron        # unload + remove both jobs
 ```
+
+| Job | Schedule | What it does |
+|---|---|---|
+| `com.fitmon.sync-hevy` | Daily, 14:00 Europe/Berlin | `sync-hevy --mode auto --trigger-source cron` |
+| `com.fitmon.pipeline-health-check` | Hourly | Emails a warning if sync-hevy hasn't even been attempted in 25+ hours |
+
+Every run — manual or cron, success or failure — sends an email (see
+`ALERT_EMAIL_TO` in `.env`) summarizing rows inserted/updated/skipped, or
+the failure reason. `meta.ingestion_log.trigger_source` records `manual`
+vs `cron` for every row; a cron run that started more than 15 minutes
+after its 14:00 schedule (i.e. launchd caught it up after the machine
+woke from sleep) is flagged in `meta.ingestion_log.details` and called
+out in its email. Logs from the launchd jobs themselves land in
+`logs/launchd-sync-hevy.log` and `logs/launchd-health-check.log`.
 
 **Logging.** By default the console shows `INFO` and above; every run also
 appends full `DEBUG`-level detail to `logs/pipeline_<YYYY-MM-DD>.log`
