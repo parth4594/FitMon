@@ -8,13 +8,8 @@
     <array>
         <string>/Users/parth/Code/FitMon/scripts/run_sync_hevy_cron.sh</string>
     </array>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>14</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <key>StartInterval</key>
+    <integer>86400</integer>
     <key>StandardOutPath</key>
     <string>/Users/parth/Code/FitMon/logs/launchd-sync-hevy.log</string>
     <key>StandardErrorPath</key>
